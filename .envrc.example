@@ -1,7 +1,5 @@
-CS_USERNAME=postgres
-CS_PASSWORD=password
-CS_WORKSPACE_ID=workspace_id
-CS_CLIENT_ACCESS_KEY=client_access_key
-CS_DATABASE__NAME=database_name
-CS_DATABASE__HOST=database_host
-CS_DATABASE__PORT=database_port
+export CS_DATABASE__USERNAME=postgres
+export CS_DATABASE__PASSWORD=password
+export CS_DATABASE__NAME=postgres
+export CS_DATABASE__HOST=127.0.0.1
+export CS_DATABASE__PORT=6432
