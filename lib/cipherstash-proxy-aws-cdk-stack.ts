@@ -1,8 +1,15 @@
-import { Stack, StackProps } from 'aws-cdk-lib';
-import { Construct } from 'constructs';
-import { Cluster, ContainerImage, FargateTaskDefinition, Protocol } from 'aws-cdk-lib/aws-ecs';
-import { Vpc } from 'aws-cdk-lib/aws-ec2';
-import { ApplicationLoadBalancedFargateService } from 'aws-cdk-lib/aws-ecs-patterns';
+import { Stack, type StackProps } from 'aws-cdk-lib';
+import type { Construct } from 'constructs';
+import { Vpc, SecurityGroup, Port, Peer } from 'aws-cdk-lib/aws-ec2';
+import { NetworkLoadBalancer, Protocol } from 'aws-cdk-lib/aws-elasticloadbalancingv2';
+import { 
+  Cluster, 
+  ContainerImage, 
+  FargateTaskDefinition, 
+  LogDriver, 
+  FargateService, 
+  Protocol as ECSProtocol 
+} from 'aws-cdk-lib/aws-ecs';
 
 export class CipherstashProxyAwsCdkStack extends Stack {
   constructor(scope: Construct, id: string, props?: StackProps) {
@@ -19,29 +26,61 @@ export class CipherstashProxyAwsCdkStack extends Stack {
     const container = taskDefinition.addContainer('cipherstash-proxy', {
       image: ContainerImage.fromRegistry('cipherstash/cipherstash-proxy:latest'),
       environment: {
-        CS_USERNAME: process.env.CS_USERNAME || 'postgres',
-        CS_PASSWORD: process.env.CS_PASSWORD || 'password',
-        CS_WORKSPACE_ID: process.env.CS_WORKSPACE_ID || 'workspace',
-        CS_CLIENT_ACCESS_KEY: process.env.CS_CLIENT_ACCESS_KEY || '1234567890',
-        CS_DATABASE__NAME: process.env.CS_DATABASE__NAME || 'database',
-        CS_DATABASE__HOST: process.env.CS_DATABASE__HOST || 'localhost',
-        CS_DATABASE__PORT: process.env.CS_DATABASE__PORT || '5432',
+        CS_DATABASE__USERNAME: process.env.CS_DATABASE__USERNAME || 'username',
+        CS_DATABASE__PASSWORD: process.env.CS_DATABASE__PASSWORD || 'password',
+        CS_DATABASE__NAME: process.env.CS_DATABASE__NAME || 'name',
+        CS_DATABASE__HOST: process.env.CS_DATABASE__HOST || 'host',
+        CS_DATABASE__PORT: process.env.CS_DATABASE__PORT || 'port',
       },
+      logging: LogDriver.awsLogs({
+        streamPrefix: "cipherstash-proxy",
+        logRetention: 30 // days
+      }),
     });
 
     // Map the port
     container.addPortMappings({
       containerPort: 6432,
-      hostPort: 6432,
+      protocol: ECSProtocol.TCP,
+    });
+
+    // Define a Security Group for the ECS tasks
+    const ecsSecurityGroup = new SecurityGroup(this, 'ECSSecurityGroup', {
+      vpc,
+      description: 'Allow TCP access on port 6432 from anywhere for ECS tasks',
+      allowAllOutbound: true // Typically set to true unless you have specific needs
+    });
+
+    // Allow incoming TCP traffic on port 6432 from anywhere
+    // This is a security risk and should be locked down to specific IPs or services
+    ecsSecurityGroup.addIngressRule(Peer.anyIpv4(), Port.tcp(6432), 'Allow TCP traffic on port 6432 from anywhere');
+
+    // Create a Network Load Balancer
+    const nlb = new NetworkLoadBalancer(this, 'MyNLB', {
+      vpc,
+      internetFacing: true
+    });
+
+    // Create an ECS Service using Fargate without an ALB
+    const fargateService = new FargateService(this, 'MyFargateService', {
+      cluster,
+      taskDefinition,
+      securityGroups: [ecsSecurityGroup],
+    });
+
+    // Add a listener to the NLB
+    const listener = nlb.addListener('Listener', {
+      port: 6432,
       protocol: Protocol.TCP,
     });
 
-    // Create an ECS Service using a Fargate service and make it public
-    new ApplicationLoadBalancedFargateService(this, 'MyFargateService', {
-      cluster,
-      taskDefinition,
-      publicLoadBalancer: true,
-      listenerPort: 6432,
+    // Add the ECS service as a target
+    listener.addTargets('EcsService', {
+      port: 6432,
+      targets: [fargateService.loadBalancerTarget({
+        containerName: 'cipherstash-proxy',
+        containerPort: 6432
+      })],
     });
   }
 }
